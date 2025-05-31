@@ -9,10 +9,19 @@
     .waveform-container {
       margin: 20px 0;
       position: relative;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .waveform-wrapper {
+      position: relative;
+      flex-grow: 1;
     }
     .waveform {
       border: 1px solid #ccc;
       cursor: pointer;
+      width: 100%;
+      height: 100px;
     }
     .selection {
       position: absolute;
@@ -38,19 +47,42 @@
     .analysis-controls label {
       min-width: 150px;
     }
+    .play-button {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 2px solid #333;
+      background: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .play-button:active {
+      background: #eee;
+    }
   </style>
 </head>
 <body>
   <h2>Static EQ Curve Comparator</h2>
   <input type="file" id="yourTrack" accept="audio/*">
   <div class="waveform-container">
-    <canvas id="yourWaveform" class="waveform" width="1000" height="100"></canvas>
-    <div id="yourSelection" class="selection"></div>
+    <button class="play-button" id="yourPlayButton">▶</button>
+    <div class="waveform-wrapper">
+      <canvas id="yourWaveform" class="waveform"></canvas>
+      <div id="yourSelection" class="selection"></div>
+    </div>
   </div>
   <input type="file" id="refTrack" accept="audio/*">
   <div class="waveform-container">
-    <canvas id="refWaveform" class="waveform" width="1000" height="100"></canvas>
-    <div id="refSelection" class="selection"></div>
+    <button class="play-button" id="refPlayButton">▶</button>
+    <div class="waveform-wrapper">
+      <canvas id="refWaveform" class="waveform"></canvas>
+      <div id="refSelection" class="selection"></div>
+    </div>
   </div>
   <div class="analysis-controls">
     <label for="analysisLength">Analysis Length (seconds):</label>
@@ -73,6 +105,75 @@
     let refStartSample = 0;
     let currentChart = null;
     let analysisLength = 1.0; // Default analysis length in seconds
+    let yourSource = null;
+    let refSource = null;
+    let yourPlayButton = null;
+    let refPlayButton = null;
+
+    // Setup play buttons
+    function setupPlayButton(button, buffer, startSample) {
+      if (button.id === 'yourPlayButton') {
+        yourPlayButton = { button, buffer, startSample };
+      } else {
+        refPlayButton = { button, buffer, startSample };
+      }
+
+      button.addEventListener('mousedown', () => {
+        if (!buffer) return;
+        
+        // Create new source
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        
+        // Get current start sample
+        const currentStart = button.id === 'yourPlayButton' ? yourStartSample : refStartSample;
+        
+        // Start from the current playhead position
+        source.start(0, currentStart / buffer.sampleRate);
+        
+        // Store source for stopping
+        if (button.id === 'yourPlayButton') {
+          yourSource = source;
+        } else {
+          refSource = source;
+        }
+      });
+
+      button.addEventListener('mouseup', () => {
+        const source = button.id === 'yourPlayButton' ? yourSource : refSource;
+        if (source) {
+          source.stop();
+          if (button.id === 'yourPlayButton') {
+            yourSource = null;
+          } else {
+            refSource = null;
+          }
+        }
+      });
+
+      // Also stop on mouseleave in case user moves mouse away while holding
+      button.addEventListener('mouseleave', () => {
+        const source = button.id === 'yourPlayButton' ? yourSource : refSource;
+        if (source) {
+          source.stop();
+          if (button.id === 'yourPlayButton') {
+            yourSource = null;
+          } else {
+            refSource = null;
+          }
+        }
+      });
+    }
+
+    // Update play button start position
+    function updatePlayButtonStart(button, startSample) {
+      if (button.id === 'yourPlayButton') {
+        yourStartSample = startSample;
+      } else {
+        refStartSample = startSample;
+      }
+    }
 
     // Convert frequency to note name
     function freqToNote(freq) {
@@ -509,17 +610,23 @@
         yourBuffer = await decodeFile(file);
         const { startSample } = findLoudestSegment(yourBuffer, windowSize);
         yourStartSample = startSample;
-        drawWaveform(document.getElementById("yourWaveform"), yourBuffer, yourStartSample);
+        const canvas = document.getElementById("yourWaveform");
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = 100;
+        drawWaveform(canvas, yourBuffer, yourStartSample);
         
         // Setup interaction after buffer is loaded
-        const canvas = document.getElementById("yourWaveform");
         canvas.onclick = (e) => {
           const rect = canvas.getBoundingClientRect();
           const x = e.clientX - rect.left;
-          yourStartSample = Math.floor(x / canvas.width * yourBuffer.length);
+          const newStartSample = Math.floor((x / rect.width) * yourBuffer.length);
+          yourStartSample = newStartSample;
           drawWaveform(canvas, yourBuffer, yourStartSample);
           if (refBuffer) analyze(); // Only analyze if both files are loaded
         };
+
+        // Setup play button
+        setupPlayButton(document.getElementById("yourPlayButton"), yourBuffer, yourStartSample);
 
         // Run analysis if reference file is already loaded
         if (refBuffer) analyze();
@@ -532,17 +639,23 @@
         refBuffer = await decodeFile(file);
         const { startSample } = findLoudestSegment(refBuffer, windowSize);
         refStartSample = startSample;
-        drawWaveform(document.getElementById("refWaveform"), refBuffer, refStartSample);
+        const canvas = document.getElementById("refWaveform");
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = 100;
+        drawWaveform(canvas, refBuffer, refStartSample);
         
         // Setup interaction after buffer is loaded
-        const canvas = document.getElementById("refWaveform");
         canvas.onclick = (e) => {
           const rect = canvas.getBoundingClientRect();
           const x = e.clientX - rect.left;
-          refStartSample = Math.floor(x / canvas.width * refBuffer.length);
+          const newStartSample = Math.floor((x / rect.width) * refBuffer.length);
+          refStartSample = newStartSample;
           drawWaveform(canvas, refBuffer, refStartSample);
           if (yourBuffer) analyze(); // Only analyze if both files are loaded
         };
+
+        // Setup play button
+        setupPlayButton(document.getElementById("refPlayButton"), refBuffer, refStartSample);
 
         // Run analysis if your file is already loaded
         if (yourBuffer) analyze();
