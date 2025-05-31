@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Static EQ Curve Comparator</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+  <style>
+    .waveform-container {
+      margin: 20px 0;
+      position: relative;
+    }
+    .waveform {
+      border: 1px solid #ccc;
+      cursor: pointer;
+    }
+    .selection {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      background: rgba(0, 0, 255, 0.1);
+      border: 1px solid blue;
+      pointer-events: none;
+    }
+    .chart-controls {
+      margin: 10px 0;
+    }
+    .chart-controls button {
+      margin-right: 10px;
+      padding: 5px 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Static EQ Curve Comparator</h2>
+  <input type="file" id="yourTrack" accept="audio/*">
+  <div class="waveform-container">
+    <canvas id="yourWaveform" class="waveform" width="1000" height="100"></canvas>
+    <div id="yourSelection" class="selection"></div>
+  </div>
+  <input type="file" id="refTrack" accept="audio/*">
+  <div class="waveform-container">
+    <canvas id="refWaveform" class="waveform" width="1000" height="100"></canvas>
+    <div id="refSelection" class="selection"></div>
+  </div>
+  <div class="chart-controls">
+    <button onclick="resetZoom()">Reset Zoom</button>
+    <button onclick="zoomIn()">Zoom In</button>
+    <button onclick="zoomOut()">Zoom Out</button>
+  </div>
+  <canvas id="eqChart" width="1000" height="400"></canvas>
+
+  <script type="module">
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const windowSize = 2048;
+    let yourBuffer = null;
+    let refBuffer = null;
+    let yourStartSample = 0;
+    let refStartSample = 0;
+    let currentChart = null;
+
+    // Make zoom functions available globally
+    window.resetZoom = function() {
+      if (currentChart) {
+        currentChart.resetZoom();
+      }
+    };
+
+    window.zoomIn = function() {
+      if (currentChart) {
+        currentChart.zoom(1.5);
+      }
+    };
+
+    window.zoomOut = function() {
+      if (currentChart) {
+        currentChart.zoom(0.75);
+      }
+    };
+
+    async function decodeFile(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      return await audioCtx.decodeAudioData(arrayBuffer);
+    }
+
+    function drawWaveform(canvas, buffer, startSample = 0) {
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+      const data = buffer.getChannelData(0);
+      
+      // Clear canvas
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, width, height);
+      
+      // Draw waveform
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      
+      const step = Math.ceil(data.length / width);
+      const amp = height / 2;
+      
+      for (let i = 0; i < width; i++) {
+        let min = 1.0;
+        let max = -1.0;
+        for (let j = 0; j < step; j++) {
+          const datum = data[i * step + j];
+          if (datum < min) min = datum;
+          if (datum > max) max = datum;
+        }
+        ctx.moveTo(i, (1 + min) * amp);
+        ctx.lineTo(i, (1 + max) * amp);
+      }
+      
+      ctx.stroke();
+      
+      // Draw selection
+      const selection = canvas.parentElement.querySelector('.selection');
+      selection.style.left = (startSample / data.length * width) + 'px';
+      selection.style.width = (windowSize / data.length * width) + 'px';
+    }
+
+    function getRMS(data, start, size) {
+      let sum = 0;
+      for (let i = start; i < start + size; i++) {
+        const sample = data[i] || 0;
+        sum += sample * sample;
+      }
+      return Math.sqrt(sum / size);
+    }
+
+    // Calculate LUFS for a given audio segment
+    function calculateLUFS(data, start, size, sampleRate) {
+      // K-weighting filter coefficients (simplified)
+      const k1 = 1.0;
+      const k2 = 1.4;
+      const k3 = 1.0;
+      
+      // Pre-filtering stage
+      const filtered = new Float32Array(size);
+      for (let i = 0; i < size; i++) {
+        const sample = data[start + i] || 0;
+        // Simplified K-weighting filter
+        filtered[i] = sample * k1 * k2 * k3;
+      }
+      
+      // Calculate RMS with 400ms integration time
+      const integrationTime = 0.4; // seconds
+      const samplesPerBlock = Math.floor(sampleRate * integrationTime);
+      let sum = 0;
+      let count = 0;
+      
+      for (let i = 0; i < size; i += samplesPerBlock) {
+        const blockSize = Math.min(samplesPerBlock, size - i);
+        let blockSum = 0;
+        
+        for (let j = 0; j < blockSize; j++) {
+          const sample = filtered[i + j];
+          blockSum += sample * sample;
+        }
+        
+        sum += Math.sqrt(blockSum / blockSize);
+        count++;
+      }
+      
+      // Calculate average and convert to LUFS
+      const average = sum / count;
+      return -0.691 + 10 * Math.log10(average * average);
+    }
+
+    // Match LUFS levels between two segments
+    function matchLUFS(data1, start1, size1, data2, start2, size2, sampleRate) {
+      const lufs1 = calculateLUFS(data1, start1, size1, sampleRate);
+      const lufs2 = calculateLUFS(data2, start2, size2, sampleRate);
+      const gainDiff = lufs2 - lufs1;
+      return Math.pow(10, gainDiff / 20); // Convert dB to linear gain
+    }
+
+    function findLoudestSegment(buffer, windowSize) {
+      const data = buffer.getChannelData(0);
+      let maxRMS = 0;
+      let maxIndex = 0;
+      for (let i = 0; i < data.length - windowSize; i += windowSize / 4) {
+        const rms = getRMS(data, i, windowSize);
+        if (rms > maxRMS) {
+          maxRMS = rms;
+          maxIndex = i;
+        }
+      }
+      return { startSample: maxIndex, length: windowSize };
+    }
+
+    function getFrequencies(sampleRate, fftSize) {
+      const freqs = [];
+      for (let i = 0; i < fftSize / 2; i++) {
+        freqs.push(i * sampleRate / fftSize);
+      }
+      return freqs;
+    }
+
+    function analyzeFFT(buffer, startSample, fftSize) {
+      const data = buffer.getChannelData(0);
+      const numWindows = Math.floor(fftSize / (windowSize / 2)); // Adjust number of windows based on analysis size
+      const windowStep = windowSize / 2; // 50% overlap between windows
+      
+      // Initialize arrays for averaging
+      const realSum = new Float32Array(windowSize);
+      const imagSum = new Float32Array(windowSize);
+      
+      // Process multiple windows across the analysis section
+      for (let w = 0; w < numWindows; w++) {
+        const windowStart = startSample + (w * windowStep);
+        
+        // Skip if window would go out of bounds
+        if (windowStart < 0 || windowStart + windowSize > data.length) continue;
+        
+        // Get the audio data for this window
+        const windowData = data.slice(windowStart, windowStart + windowSize);
+        
+        // Apply Hanning window
+        const windowedData = new Float32Array(windowSize);
+        for (let i = 0; i < windowSize; i++) {
+          windowedData[i] = windowData[i] * (0.5 * (1 - Math.cos((2 * Math.PI * i) / (windowSize - 1))));
+        }
+
+        // Perform FFT for this window
+        const real = new Float32Array(windowSize);
+        const imag = new Float32Array(windowSize);
+        
+        // Copy input data to real array
+        for (let i = 0; i < windowSize; i++) {
+          real[i] = windowedData[i];
+          imag[i] = 0;
+        }
+
+        // Cooley-Tukey FFT
+        function fft(real, imag) {
+          const n = real.length;
+          if (n <= 1) return;
+
+          // Divide
+          const half = n / 2;
+          const realEven = new Float32Array(half);
+          const imagEven = new Float32Array(half);
+          const realOdd = new Float32Array(half);
+          const imagOdd = new Float32Array(half);
+
+          for (let i = 0; i < half; i++) {
+            realEven[i] = real[i * 2];
+            imagEven[i] = imag[i * 2];
+            realOdd[i] = real[i * 2 + 1];
+            imagOdd[i] = imag[i * 2 + 1];
+          }
+
+          // Conquer
+          fft(realEven, imagEven);
+          fft(realOdd, imagOdd);
+
+          // Combine
+          for (let k = 0; k < half; k++) {
+            const angle = -2 * Math.PI * k / n;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            const realTemp = realOdd[k] * cos - imagOdd[k] * sin;
+            const imagTemp = realOdd[k] * sin + imagOdd[k] * cos;
+            real[k] = realEven[k] + realTemp;
+            imag[k] = imagEven[k] + imagTemp;
+            real[k + half] = realEven[k] - realTemp;
+            imag[k + half] = imagEven[k] - imagTemp;
+          }
+        }
+
+        fft(real, imag);
+        
+        // Add to running sum
+        for (let i = 0; i < windowSize; i++) {
+          realSum[i] += real[i];
+          imagSum[i] += imag[i];
+        }
+      }
+      
+      // Calculate average magnitude spectrum with frequency-dependent smoothing
+      const spectrum = new Float32Array(windowSize / 2);
+      const sampleRate = buffer.sampleRate;
+      
+      for (let i = 0; i < windowSize / 2; i++) {
+        const freq = i * sampleRate / windowSize;
+        const magnitude = Math.sqrt(realSum[i] * realSum[i] + imagSum[i] * imagSum[i]) / numWindows;
+        
+        // Calculate smoothing factor based on frequency
+        let smoothingFactor = 1;
+        if (freq > 1500) {
+          // Increase smoothing for frequencies above 1500 Hz
+          // Use a logarithmic scale for smooth transition
+          const normalizedFreq = (freq - 1500) / (sampleRate/2 - 1500);
+          smoothingFactor = 1 + Math.log10(1 + normalizedFreq * 9) * 15; // Smoothing increases with frequency
+        }
+        
+        // Apply smoothing by averaging with neighboring bins
+        let smoothedMagnitude = magnitude;
+        if (smoothingFactor > 1) {
+          const windowSize = Math.floor(smoothingFactor);
+          let sum = magnitude;
+          let count = 1;
+          
+          for (let j = 1; j <= windowSize; j++) {
+            if (i - j >= 0) {
+              const prevMagnitude = Math.sqrt(realSum[i-j] * realSum[i-j] + imagSum[i-j] * imagSum[i-j]) / numWindows;
+              sum += prevMagnitude;
+              count++;
+            }
+            if (i + j < windowSize/2) {
+              const nextMagnitude = Math.sqrt(realSum[i+j] * realSum[i+j] + imagSum[i+j] * imagSum[i+j]) / numWindows;
+              sum += nextMagnitude;
+              count++;
+            }
+          }
+          smoothedMagnitude = sum / count;
+        }
+        
+        // Convert to dB, with a small epsilon to avoid log(0)
+        spectrum[i] = 20 * Math.log10(smoothedMagnitude + 1e-10);
+      }
+
+      return Array.from(spectrum);
+    }
+
+    async function process(file, label, color, buffer, startSample, gain = 1.0, analysisSize = windowSize) {
+      const spectrum = analyzeFFT(buffer, startSample, analysisSize);
+      const freqs = getFrequencies(buffer.sampleRate, windowSize); // Use windowSize for frequency calculation
+      // Apply gain to spectrum
+      const adjustedSpectrum = spectrum.map(value => value + 20 * Math.log10(gain));
+      return { label, freqs, spectrum: adjustedSpectrum, color };
+    }
+
+    async function analyze() {
+      if (!yourBuffer || !refBuffer) return;
+
+      try {
+        // Use a longer section for analysis (1 second)
+        const analysisWindowSize = Math.min(yourBuffer.sampleRate, refBuffer.sampleRate);
+        const yourAnalysisStart = Math.max(0, yourStartSample - analysisWindowSize/2);
+        const refAnalysisStart = Math.max(0, refStartSample - analysisWindowSize/2);
+        
+        // Calculate LUFS matching gain using the longer section
+        const gain = matchLUFS(
+          yourBuffer.getChannelData(0), yourAnalysisStart, analysisWindowSize,
+          refBuffer.getChannelData(0), refAnalysisStart, analysisWindowSize,
+          yourBuffer.sampleRate
+        );
+
+        const [yourData, refData] = await Promise.all([
+          process(null, 'Your Track', 'blue', yourBuffer, yourAnalysisStart, gain, analysisWindowSize),
+          process(null, 'Reference Track', 'green', refBuffer, refAnalysisStart, 1.0, analysisWindowSize)
+        ]);
+
+        const ctx = document.getElementById("eqChart").getContext("2d");
+        
+        // Destroy previous chart if it exists
+        if (currentChart) {
+          currentChart.destroy();
+        }
+
+        currentChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: yourData.freqs,
+            datasets: [
+              {
+                label: yourData.label,
+                data: yourData.spectrum,
+                borderColor: yourData.color,
+                borderWidth: 2,
+                pointRadius: 0
+              },
+              {
+                label: refData.label,
+                data: refData.spectrum,
+                borderColor: refData.color,
+                borderWidth: 2,
+                pointRadius: 0
+              }
+            ]
+          },
+          options: {
+            scales: {
+              x: {
+                type: 'logarithmic',
+                title: { display: true, text: 'Frequency (Hz)' },
+                min: 20,
+                max: 20000
+              },
+              y: {
+                title: { display: true, text: 'Magnitude (dB)' },
+                min: function(context) {
+                  const chart = context.chart;
+                  const {min, max} = chart.scales.y;
+                  const range = max - min;
+                  return min - range * 0.1;
+                },
+                max: function(context) {
+                  const chart = context.chart;
+                  const {min, max} = chart.scales.y;
+                  const range = max - min;
+                  return max + range * 0.1;
+                }
+              }
+            },
+            responsive: false,
+            interaction: {
+              mode: 'index',
+              intersect: false
+            },
+            plugins: {
+              zoom: {
+                pan: {
+                  enabled: true,
+                  mode: 'xy'
+                },
+                zoom: {
+                  wheel: {
+                    enabled: true,
+                  },
+                  pinch: {
+                    enabled: true
+                  },
+                  mode: 'xy',
+                }
+              },
+              tooltip: {
+                enabled: true,
+                mode: 'index',
+                intersect: false,
+                callbacks: {
+                  title: function(context) {
+                    const freq = parseFloat(context[0].label.replace(/,/g, ''));
+                    if (freq >= 1000) {
+                      return `Frequency: ${(freq/1000).toFixed(1)} kHz`;
+                    }
+                    return `Frequency: ${Math.round(freq)} Hz`;
+                  },
+                  label: function(context) {
+                    const dataset = context.dataset;
+                    const value = context.raw;
+                    return `${dataset.label}: ${value.toFixed(1)} dB`;
+                  },
+                  afterBody: function(context) {
+                    if (context.length > 1) {
+                      const diff = context[1].raw - context[0].raw;
+                      return [`Difference: ${diff.toFixed(1)} dB`];
+                    }
+                    return [];
+                  }
+                }
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error analyzing audio:', error);
+      }
+    }
+
+    document.getElementById("yourTrack").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        yourBuffer = await decodeFile(file);
+        const { startSample } = findLoudestSegment(yourBuffer, windowSize);
+        yourStartSample = startSample;
+        drawWaveform(document.getElementById("yourWaveform"), yourBuffer, yourStartSample);
+        
+        // Setup interaction after buffer is loaded
+        const canvas = document.getElementById("yourWaveform");
+        canvas.onclick = (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          yourStartSample = Math.floor(x / canvas.width * yourBuffer.length);
+          drawWaveform(canvas, yourBuffer, yourStartSample);
+          if (refBuffer) analyze(); // Only analyze if both files are loaded
+        };
+
+        // Run analysis if reference file is already loaded
+        if (refBuffer) analyze();
+      }
+    });
+
+    document.getElementById("refTrack").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        refBuffer = await decodeFile(file);
+        const { startSample } = findLoudestSegment(refBuffer, windowSize);
+        refStartSample = startSample;
+        drawWaveform(document.getElementById("refWaveform"), refBuffer, refStartSample);
+        
+        // Setup interaction after buffer is loaded
+        const canvas = document.getElementById("refWaveform");
+        canvas.onclick = (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          refStartSample = Math.floor(x / canvas.width * refBuffer.length);
+          drawWaveform(canvas, refBuffer, refStartSample);
+          if (yourBuffer) analyze(); // Only analyze if both files are loaded
+        };
+
+        // Run analysis if your file is already loaded
+        if (yourBuffer) analyze();
+      }
+    });
+  </script>
+</body>
+</html>
