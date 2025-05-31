@@ -759,6 +759,27 @@
       return freqs;
     }
 
+    // Calculate 1/3 octave band frequencies
+    function getThirdOctaveBands(minFreq, maxFreq) {
+      const bands = [];
+      let f = minFreq;
+      while (f <= maxFreq) {
+        bands.push(f);
+        f *= Math.pow(2, 1/3); // Multiply by 2^(1/3) to get next 1/3 octave
+      }
+      return bands;
+    }
+
+    // Get the frequency band index for a given frequency
+    function getBandIndex(freq, bands) {
+      for (let i = 0; i < bands.length - 1; i++) {
+        if (freq >= bands[i] && freq < bands[i + 1]) {
+          return i;
+        }
+      }
+      return bands.length - 1;
+    }
+
     function analyzeFFT(buffer, startSample, fftSize) {
       const data = buffer.getChannelData(0);
       const numWindows = Math.floor(fftSize / (windowSize / 2)); // Adjust number of windows based on analysis size
@@ -840,50 +861,45 @@
         }
       }
       
-      // Calculate average magnitude spectrum with frequency-dependent smoothing
+      // Calculate average magnitude spectrum
       const spectrum = new Float32Array(windowSize / 2);
       const sampleRate = buffer.sampleRate;
       
+      // Get 1/3 octave bands
+      const thirdOctaveBands = getThirdOctaveBands(20, sampleRate/2);
+      
+      // Initialize array for 1/3 octave smoothed spectrum
+      const smoothedSpectrum = new Float32Array(thirdOctaveBands.length);
+      const bandCounts = new Float32Array(thirdOctaveBands.length);
+      
+      // First calculate raw spectrum
       for (let i = 0; i < windowSize / 2; i++) {
         const freq = i * sampleRate / windowSize;
         const magnitude = Math.sqrt(realSum[i] * realSum[i] + imagSum[i] * imagSum[i]) / numWindows;
+        spectrum[i] = 20 * Math.log10(magnitude + 1e-10);
         
-        // Calculate smoothing factor based on frequency
-        let smoothingFactor = 1;
-        if (freq > 1500) {
-          // Increase smoothing for frequencies above 1500 Hz
-          // Use a logarithmic scale for smooth transition
-          const normalizedFreq = (freq - 1500) / (sampleRate/2 - 1500);
-          smoothingFactor = 1 + Math.log10(1 + normalizedFreq * 9) * 15; // Smoothing increases with frequency
+        // Add to appropriate 1/3 octave band
+        const bandIndex = getBandIndex(freq, thirdOctaveBands);
+        smoothedSpectrum[bandIndex] += spectrum[i];
+        bandCounts[bandIndex]++;
+      }
+      
+      // Calculate average for each band
+      for (let i = 0; i < thirdOctaveBands.length; i++) {
+        if (bandCounts[i] > 0) {
+          smoothedSpectrum[i] /= bandCounts[i];
         }
-        
-        // Apply smoothing by averaging with neighboring bins
-        let smoothedMagnitude = magnitude;
-        if (smoothingFactor > 1) {
-          const windowSize = Math.floor(smoothingFactor);
-          let sum = magnitude;
-          let count = 1;
-          
-          for (let j = 1; j <= windowSize; j++) {
-            if (i - j >= 0) {
-              const prevMagnitude = Math.sqrt(realSum[i-j] * realSum[i-j] + imagSum[i-j] * imagSum[i-j]) / numWindows;
-              sum += prevMagnitude;
-              count++;
-            }
-            if (i + j < windowSize/2) {
-              const nextMagnitude = Math.sqrt(realSum[i+j] * realSum[i+j] + imagSum[i+j] * imagSum[i+j]) / numWindows;
-              sum += nextMagnitude;
-              count++;
-            }
-          }
-          smoothedMagnitude = sum / count;
-        }
-        
-        // Convert to dB, with a small epsilon to avoid log(0)
-        spectrum[i] = 20 * Math.log10(smoothedMagnitude + 1e-10);
+      }
+      
+      // Interpolate back to original frequency points
+      const finalSpectrum = new Float32Array(windowSize / 2);
+      for (let i = 0; i < windowSize / 2; i++) {
+        const freq = i * sampleRate / windowSize;
+        const bandIndex = getBandIndex(freq, thirdOctaveBands);
+        finalSpectrum[i] = smoothedSpectrum[bandIndex];
       }
 
-      return Array.from(spectrum);
+      return Array.from(finalSpectrum);
     }
 
     async function process(file, label, color, buffer, startSample, gain = 1.0, analysisSize = windowSize) {
