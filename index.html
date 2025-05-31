@@ -996,7 +996,10 @@
         if (window.currentChart) {
           window.currentChart.destroy();
         }
-
+        yourData.spectrum.shift();
+        refData.spectrum.shift();
+        yourData.freqs.shift();
+        refData.freqs.shift();
         window.currentChart = new Chart(ctx, {
           type: 'line',
           data: {
