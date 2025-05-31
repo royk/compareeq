@@ -22,6 +22,7 @@ A web-based tool for comparing and analyzing audio tracks using frequency analys
 4. Adjust the analysis length as needed
 5. View the EQ curve comparison chart
 6. (Optional) Enter your OpenAI API key and additional context to get AI-powered mixing advice
+7. (Optional) Enter your OpenAI API key as url parameter `?key=[yourkey]`
 
 ## Requirements
 
