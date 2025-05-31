@@ -1,4 +1,4 @@
-# Static EQ Curve Comparator
+# EQ Reference Comparison
 
 A web-based tool for comparing and analyzing audio tracks using frequency analysis and AI-powered mixing advice.
 
