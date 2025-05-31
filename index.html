@@ -162,7 +162,7 @@
                 ]
               }
             ],
-            max_tokens: 1000
+            max_tokens: 5000
           })
         });
 
@@ -188,6 +188,14 @@
     document.getElementById('openaiKey').addEventListener('input', (e) => {
       document.getElementById('getAdviceButton').disabled = !e.target.value;
     });
+
+    // Read API key from URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const apiKey = urlParams.get('key');
+    if (apiKey) {
+      document.getElementById('openaiKey').value = apiKey;
+      document.getElementById('getAdviceButton').disabled = false;
+    }
   </script>
 
   <script type="module">
