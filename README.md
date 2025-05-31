@@ -2,6 +2,8 @@
 
 A web-based tool for comparing and analyzing audio tracks using frequency analysis and AI-powered mixing advice.
 
+🌐 [Try it online](https://eqreference.netlify.app/)
+
 ## Features
 
 - **Audio Comparison**: Upload and compare two audio tracks side by side
