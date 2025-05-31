@@ -95,6 +95,122 @@
     <button onclick="zoomOut()">Zoom Out</button>
   </div>
   <canvas id="eqChart" width="1000" height="400"></canvas>
+  <div style="margin-top: 20px;">
+    <div class="analysis-controls" style="margin-bottom: 10px;">
+      <label for="openaiKey">OpenAI API Key:</label>
+      <input type="password" id="openaiKey" style="width: 300px;">
+      <button id="getAdviceButton" disabled>Get Mixing Advice</button>
+    </div>
+    <h3>Mixing Advice</h3>
+    <textarea id="mixingAdvice" style="width: 100%; height: 200px; padding: 10px; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5;" readonly></textarea>
+  </div>
+
+  <script>
+    // Global function for getting mixing advice
+    async function getMixingAdvice() {
+      const apiKey = document.getElementById('openaiKey').value;
+      if (!apiKey) {
+        document.getElementById('mixingAdvice').value = 'Please enter your OpenAI API key';
+        return;
+      }
+
+      if (!window.currentChart) {
+        document.getElementById('mixingAdvice').value = 'Please analyze audio files first';
+        return;
+      }
+
+      const button = document.getElementById('getAdviceButton');
+      button.disabled = true;
+      button.textContent = 'Getting Advice...';
+      document.getElementById('mixingAdvice').value = 'Getting mixing advice...';
+
+      try {
+        // Get the frequency data from the chart
+        const datasets = window.currentChart.data.datasets;
+        const frequencies = window.currentChart.data.labels;
+        const yourSpectrum = datasets[0].data;
+        const refSpectrum = datasets[1].data;
+
+        // Calculate average differences in different frequency ranges
+        const ranges = [
+          { name: 'Sub Bass (20-60 Hz)', start: 20, end: 60 },
+          { name: 'Bass (60-250 Hz)', start: 60, end: 250 },
+          { name: 'Low Mids (250-500 Hz)', start: 250, end: 500 },
+          { name: 'Mids (500-2000 Hz)', start: 500, end: 2000 },
+          { name: 'High Mids (2-4 kHz)', start: 2000, end: 4000 },
+          { name: 'Presence (4-6 kHz)', start: 4000, end: 6000 },
+          { name: 'Brilliance (6-20 kHz)', start: 6000, end: 20000 }
+        ];
+
+        const analysis = ranges.map(range => {
+          let sum = 0;
+          let count = 0;
+          for (let i = 0; i < frequencies.length; i++) {
+            const freq = frequencies[i];
+            if (freq >= range.start && freq <= range.end) {
+              sum += yourSpectrum[i] - refSpectrum[i];
+              count++;
+            }
+          }
+          return {
+            range: range.name,
+            difference: count > 0 ? sum / count : 0
+          };
+        });
+
+        // Create the prompt
+        const prompt = `I have analyzed two audio tracks and found the following frequency differences between them. Please provide specific mixing advice on what changes, if any, you would make to the first track based on the reference track:
+
+${analysis.map(a => `${a.range}: ${a.difference.toFixed(1)} dB difference`).join('\n')}
+
+Please provide specific EQ recommendations and mixing tips to help get the first track to sound professional, based on that the reference track is a professional mix.`;
+
+        // Send to OpenAI
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-4',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an expert audio engineer with deep knowledge of mixing and EQ. Provide specific, actionable advice for mixing the first track to sound professional, based on that the reference track is a professional mix.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.7
+          })
+        });
+
+        const data = await response.json();
+        if (data.choices && data.choices[0]) {
+          document.getElementById('mixingAdvice').value = data.choices[0].message.content;
+        } else {
+          throw new Error('No response from OpenAI');
+        }
+      } catch (error) {
+        console.error('Error getting mixing advice:', error);
+        document.getElementById('mixingAdvice').value = 'Error getting mixing advice. Please check your API key and try again.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Get Mixing Advice';
+      }
+    }
+
+    // Add event listener for the advice button
+    document.getElementById('getAdviceButton').addEventListener('click', getMixingAdvice);
+
+    // Add event listener for API key input
+    document.getElementById('openaiKey').addEventListener('input', (e) => {
+      document.getElementById('getAdviceButton').disabled = !e.target.value;
+    });
+  </script>
 
   <script type="module">
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -103,7 +219,7 @@
     let refBuffer = null;
     let yourStartSample = 0;
     let refStartSample = 0;
-    let currentChart = null;
+    window.currentChart = null;  // Make currentChart globally accessible
     let analysisLength = 1.0; // Default analysis length in seconds
     let yourSource = null;
     let refSource = null;
@@ -202,20 +318,20 @@
 
     // Make zoom functions available globally
     window.resetZoom = function() {
-      if (currentChart) {
-        currentChart.resetZoom();
+      if (window.currentChart) {
+        window.currentChart.resetZoom();
       }
     };
 
     window.zoomIn = function() {
-      if (currentChart) {
-        currentChart.zoom(1.5);
+      if (window.currentChart) {
+        window.currentChart.zoom(1.5);
       }
     };
 
     window.zoomOut = function() {
-      if (currentChart) {
-        currentChart.zoom(0.75);
+      if (window.currentChart) {
+        window.currentChart.zoom(0.75);
       }
     };
 
@@ -499,11 +615,11 @@
         const ctx = document.getElementById("eqChart").getContext("2d");
         
         // Destroy previous chart if it exists
-        if (currentChart) {
-          currentChart.destroy();
+        if (window.currentChart) {
+          window.currentChart.destroy();
         }
 
-        currentChart = new Chart(ctx, {
+        window.currentChart = new Chart(ctx, {
           type: 'line',
           data: {
             labels: yourData.freqs,
