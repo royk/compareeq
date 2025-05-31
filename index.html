@@ -107,6 +107,10 @@
       <input type="password" id="openaiKey" style="width: 300px;">
       <button id="getAdviceButton" disabled>Get Mixing Advice</button>
     </div>
+    <div style="margin-bottom: 10px;">
+      <label for="customPrompt">Additional Context (optional):</label>
+      <input type="text" id="customPrompt" style="width: 100%;" placeholder="Add genre, key, or any other relevant information to help with the mixing advice (e.g., 'This is a rock track in E minor, aiming for a warm vintage sound')">
+    </div>
     <h3>Mixing Advice</h3>
     <textarea id="mixingAdvice" style="width: 100%; height: 200px; padding: 10px; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5;" readonly></textarea>
   </div>
@@ -139,7 +143,8 @@
         
         // Create the prompt
         const analysisLength = document.getElementById('analysisLength').value;
-        const prompt = `I have analyzed two audio tracks and found the frequency differences shown in this chart. The blue line is the first track, and the green line is the reference track. This analysis is an average over ${analysisLength} seconds of audio, with LUFs matched. Please provide specific mixing advice on what changes, if any, you would make to the first track based on the reference track. Please provide specific EQ recommendations and mixing tips to help get the first track to sound professional, based on that the reference track is a professional mix.`;
+        const customPrompt = document.getElementById('customPrompt').value;
+        const prompt = `I have analyzed two audio tracks and found the frequency differences shown in this chart. The blue line is the first track, and the green line is the reference track. This analysis is an average over ${analysisLength} seconds of audio, with LUFs matched.${customPrompt ? ` Additional context: ${customPrompt}` : ''} Please provide specific mixing advice on what changes, if any, you would make to the first track based on the reference track. Please provide specific EQ recommendations and mixing tips to help get the first track to sound professional, based on that the reference track is a professional mix.`;
 
         // Send to OpenAI
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
