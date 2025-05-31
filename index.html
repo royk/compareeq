@@ -74,6 +74,24 @@
     let currentChart = null;
     let analysisLength = 1.0; // Default analysis length in seconds
 
+    // Convert frequency to note name
+    function freqToNote(freq) {
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const a4 = 440; // A4 = 440Hz
+      const a4Index = 69; // MIDI note number for A4
+      
+      if (freq < 20) return ''; // Too low to be a note
+      
+      // Calculate MIDI note number
+      const midiNote = Math.round(12 * Math.log2(freq / a4) + a4Index);
+      
+      // Get note name and octave
+      const noteName = noteNames[midiNote % 12];
+      const octave = Math.floor(midiNote / 12) - 1;
+      
+      return `${noteName}${octave}`;
+    }
+
     // Update analysis length display
     document.getElementById('analysisLength').addEventListener('input', (e) => {
       analysisLength = parseFloat(e.target.value);
@@ -457,10 +475,11 @@
                 callbacks: {
                   title: function(context) {
                     const freq = parseFloat(context[0].label.replace(/,/g, ''));
+                    const note = freqToNote(freq);
                     if (freq >= 1000) {
-                      return `Frequency: ${(freq/1000).toFixed(1)} kHz`;
+                      return `Frequency: ${(freq/1000).toFixed(1)} kHz${note ? ` (${note})` : ''}`;
                     }
-                    return `Frequency: ${Math.round(freq)} Hz`;
+                    return `Frequency: ${Math.round(freq)} Hz${note ? ` (${note})` : ''}`;
                   },
                   label: function(context) {
                     const dataset = context.dataset;
