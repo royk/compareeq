@@ -885,51 +885,56 @@
       }
 
       // Apply smoothing based on smoothing factor
-      if (smoothingFactor > 0) {
-        const smoothedSpectrum = new Float32Array(windowSize / 2);
-        const thirdOctaveBands = getThirdOctaveBands(20, sampleRate / 2);
-        const bandValues = new Float32Array(thirdOctaveBands.length);
-        const bandCounts = new Float32Array(thirdOctaveBands.length);
+      const smoothedSpectrum = new Float32Array(windowSize / 2);
+      const thirdOctaveBands = getThirdOctaveBands(20, sampleRate / 2);
+      const bandValues = new Float32Array(thirdOctaveBands.length);
+      const bandCounts = new Float32Array(thirdOctaveBands.length);
 
-        // Calculate 1/3 octave band values
-        for (let i = 0; i < windowSize / 2; i++) {
-          const freq = i * sampleRate / windowSize;
-          const bandIndex = getBandIndex(freq, thirdOctaveBands);
-          bandValues[bandIndex] += spectrum[i];
-          bandCounts[bandIndex]++;
-        }
-
-        // Average band values
-        for (let i = 0; i < thirdOctaveBands.length; i++) {
-          if (bandCounts[i] > 0) {
-            bandValues[i] /= bandCounts[i];
-          }
-        }
-
-        // Interpolate between raw and 1/3 octave smoothed values
-        for (let i = 0; i < windowSize / 2; i++) {
-          const freq = i * sampleRate / windowSize;
-          const bandIndex = getBandIndex(freq, thirdOctaveBands);
-          const smoothedValue = bandValues[bandIndex];
-
-          // Apply minimum smoothing to frequencies above 1.5kHz
-          let effectiveSmoothingFactor = smoothingFactor;
-          if (freq >= 1500) {
-            // Increase minimum smoothing for high frequencies
-            effectiveSmoothingFactor = Math.max(smoothingFactor, 0.8);
-          }
-          if (freq >= 5000) {
-            // Even more smoothing for very high frequencies
-            effectiveSmoothingFactor = Math.max(smoothingFactor, 0.9);
-          }
-
-          smoothedSpectrum[i] = spectrum[i] * (1 - effectiveSmoothingFactor) + smoothedValue * effectiveSmoothingFactor;
-        }
-
-        return Array.from(smoothedSpectrum);
+      // Calculate 1/3 octave band values
+      for (let i = 0; i < windowSize / 2; i++) {
+        const freq = i * sampleRate / windowSize;
+        const bandIndex = getBandIndex(freq, thirdOctaveBands);
+        bandValues[bandIndex] += spectrum[i];
+        bandCounts[bandIndex]++;
       }
 
-      return Array.from(spectrum);
+      // Average band values
+      for (let i = 0; i < thirdOctaveBands.length; i++) {
+        if (bandCounts[i] > 0) {
+          bandValues[i] /= bandCounts[i];
+        }
+      }
+
+      // Interpolate between raw and 1/3 octave smoothed values
+      for (let i = 0; i < windowSize / 2; i++) {
+        const freq = i * sampleRate / windowSize;
+        const bandIndex = getBandIndex(freq, thirdOctaveBands);
+        const smoothedValue = bandValues[bandIndex];
+
+        // Apply minimum smoothing to frequencies above 1.5kHz
+        let effectiveSmoothingFactor = smoothingFactor;
+        let baseSmoothing = smoothingFactor>0.5 ? 0.6 : 0.3
+        if (freq >= 1500) {
+          // Increase minimum smoothing for high frequencies
+          effectiveSmoothingFactor = Math.max(smoothingFactor, baseSmoothing);
+        }
+        if (freq >= 5000) {
+          // Even more smoothing for very high frequencies
+          effectiveSmoothingFactor = Math.max(smoothingFactor, baseSmoothing+0.1);
+        }
+        if (freq >= 10000) {
+          // Even more smoothing for very high frequencies
+          effectiveSmoothingFactor = Math.max(smoothingFactor, baseSmoothing+0.2);
+        }
+        if (freq >= 15000) {
+          // Even more smoothing for very high frequencies
+          effectiveSmoothingFactor = Math.max(smoothingFactor, baseSmoothing+0.3);
+        }
+
+        smoothedSpectrum[i] = spectrum[i] * (1 - effectiveSmoothingFactor) + smoothedValue * effectiveSmoothingFactor;
+      }
+
+      return Array.from(smoothedSpectrum);
     }
 
     async function process(file, label, color, buffer, startSample, gain = 1.0, analysisSize = windowSize) {
