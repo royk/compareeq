@@ -954,8 +954,29 @@
       try {
         // Use the selected analysis length
         const analysisWindowSize = Math.floor(Math.min(yourBuffer.sampleRate, refBuffer.sampleRate) * analysisLength);
-        const yourAnalysisStart = Math.max(0, yourStartSample - analysisWindowSize / 2);
-        const refAnalysisStart = Math.max(0, refStartSample - analysisWindowSize / 2);
+        
+        // Calculate analysis window boundaries
+        const yourAnalysisStart = Math.max(0, Math.min(
+          yourStartSample - Math.floor(analysisWindowSize / 2),
+          yourBuffer.length - analysisWindowSize
+        ));
+        
+        const refAnalysisStart = Math.max(0, Math.min(
+          refStartSample - Math.floor(analysisWindowSize / 2),
+          refBuffer.length - analysisWindowSize
+        ));
+
+        // Ensure we have valid analysis windows
+        if (yourAnalysisStart + analysisWindowSize > yourBuffer.length || 
+            refAnalysisStart + analysisWindowSize > refBuffer.length) {
+          console.error('Analysis window exceeds buffer length:', {
+            yourWindowEnd: yourAnalysisStart + analysisWindowSize,
+            yourBufferLength: yourBuffer.length,
+            refWindowEnd: refAnalysisStart + analysisWindowSize,
+            refBufferLength: refBuffer.length
+          });
+          return;
+        }
 
         // Calculate LUFS matching gain using the longer section
         const gain = matchLUFS(
